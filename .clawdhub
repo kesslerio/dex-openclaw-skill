@@ -1,0 +1,20 @@
+{
+  "name": "activecampaign",
+  "version": "1.0.0",
+  "description": "ActiveCampaign CRM integration for lead management, deal tracking, and email automation",
+  "author": "ShapeScale",
+  "repository": "",
+  "license": "MIT",
+  "skills": {
+    "slug": "activecampaign",
+    "name": "ActiveCampaign",
+    "description": "Manage leads, deals, and email automations for clinic sales",
+    "category": "crm",
+    "tags": ["sales", "crm", "email", "automation", "leads"],
+    "requires": {
+      "env": ["ACTIVECAMPAIGN_URL", "ACTIVECAMPAIGN_API_KEY"],
+      "bins": ["activecampaign"]
+    },
+    "primaryEnv": ["ACTIVECAMPAIGN_URL", "ACTIVECAMPAIGN_API_KEY"]
+  }
+}

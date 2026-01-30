@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Update an existing Dex reminder
+# Usage: dex-reminder-update <reminder-id> <json-file>
+#    or: echo '{"note": "Updated note"}' | dex-reminder-update <reminder-id> -
+
+set -euo pipefail
+
+if [ $# -lt 2 ]; then
+    echo "Usage: dex-reminder-update <reminder-id> <json-file>" >&2
+    echo "   or: echo '{...}' | dex-reminder-update <reminder-id> -" >&2
+    echo "" >&2
+    echo "JSON format:" >&2
+    echo '  {"reminder_at": "2026-01-20T09:00:00Z", "note": "Updated note"}' >&2
+    exit 1
+fi
+
+REMINDER_ID="$1"
+JSON_DATA=""
+
+if [ "$2" = "-" ]; then
+    JSON_DATA=$(cat)
+else
+    JSON_DATA=$(cat "$2")
+fi
+
+# Load DEX_API_KEY from environment
+if [ -z "${DEX_API_KEY:-}" ]; then
+    if [ -f ~/.moltbot/.env ]; then
+        source ~/.moltbot/.env
+    fi
+fi
+
+if [ -z "${DEX_API_KEY:-}" ]; then
+    echo "Error: DEX_API_KEY not set" >&2
+    exit 1
+fi
+
+set +e
+RESPONSE=$(curl -w "\n%{http_code}" -X PUT "https://api.getdex.com/api/rest/reminders/${REMINDER_ID}" \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-dex-api-key: ${DEX_API_KEY}" \
+  -d "${JSON_DATA}" 2>&1)
+CURL_EXIT=$?
+set -e
+if [ $CURL_EXIT -ne 0 ]; then
+    echo "Error: Network failure (curl exit $CURL_EXIT)" >&2
+    exit 1
+fi
+
+HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+    echo "$BODY"
+else
+    echo "Error: HTTP $HTTP_CODE" >&2
+    echo "$BODY" >&2
+    exit 1
+fi

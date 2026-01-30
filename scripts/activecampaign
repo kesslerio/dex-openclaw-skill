@@ -1,0 +1,273 @@
+#!/bin/bash
+# ActiveCampaign CLI wrapper for Moltbot
+# Usage: activecampaign <resource> <action> [args...]
+
+set -euo pipefail
+
+# Load credentials with fallback chain:
+# 1. Environment variables
+# 2. 1Password (Clawd vault)
+# 3. Config files
+
+load_credentials() {
+  # Check environment variables first
+  if [ -n "${ACTIVECAMPAIGN_URL:-}" ] && [ -n "${ACTIVECAMPAIGN_API_KEY:-}" ]; then
+    return 0
+  fi
+
+  # Try 1Password (Clawd vault)
+  if command -v op &>/dev/null; then
+    local ac_creds
+    ac_creds=$(op item get "ActiveCampaign" --vault Clawd --fields "url,api_key" 2>/dev/null || echo "")    
+    if [ -n "$ac_creds" ]; then
+      ACTIVECAMPAIGN_URL=$(echo "$ac_creds" | grep -oP 'url:\s*\K.*' || echo "")
+      ACTIVECAMPAIGN_API_KEY=$(echo "$ac_creds" | grep -oP 'api_key:\s*\K.*' || echo "")
+      export ACTIVECAMPAIGN_URL ACTIVECAMPAIGN_API_KEY
+      return 0
+    fi
+  fi
+
+  # Fall back to config files
+  if [ -f ~/.config/activecampaign/url ] && [ -f ~/.config/activecampaign/api_key ]; then
+    ACTIVECAMPAIGN_URL=$(cat ~/.config/activecampaign/url)
+    ACTIVECAMPAIGN_API_KEY=$(cat ~/.config/activecampaign/api_key)
+    export ACTIVECAMPAIGN_URL ACTIVECAMPAIGN_API_KEY
+    return 0
+  fi
+
+  # No credentials found
+  return 1
+}
+
+if ! load_credentials; then
+  echo "Error: Missing ActiveCampaign credentials" >&2
+  echo "" >&2
+  echo "Set credentials via one of:" >&2
+  echo "  1. Environment: ACTIVECAMPAIGN_URL, ACTIVECAMPAIGN_API_KEY" >&2
+  echo "  2. 1Password: Clawd vault item 'ActiveCampaign'" >&2
+  echo "  3. Config files: ~/.config/activecampaign/{url,api_key}" >&2
+  exit 1
+fi
+
+# Clean trailing slash
+ACTIVECAMPAIGN_URL="${ACTIVECAMPAIGN_URL%/}"
+
+BASE_URL="$ACTIVECAMPAIGN_URL/admin/api.php"
+API_VERSION="3"
+
+# Rate limiting: 5 req/sec = 200ms between requests
+RATE_DELAY="0.2"
+
+# Helper function for API calls
+ac_api() {
+  local method="$1"
+  local endpoint="$2"
+  local data="${3:-}"
+
+  # Rate limit
+  sleep "$RATE_DELAY"
+
+  local curl_args=(-X "$method" "-H" "Api-Token: $ACTIVECAMPAIGN_API_KEY" "-H" "Content-Type: application/json")
+
+  if [ -n "$data" ]; then
+    curl_args+=("-d" "$data")
+  fi
+
+  curl -s "${curl_args[@]}" "$BASE_URL?api_version=$API_VERSION&api_output=json&api_action=$endpoint"
+}
+
+# Parse resource and action
+RESOURCE="$1"
+ACTION="$2"
+shift 2
+
+case "$RESOURCE" in
+  contacts)
+    case "$ACTION" in
+      list)
+        # List all contacts with pagination
+        ac_api GET "contact_list" "list=100&page=1"
+        ;;
+      create)
+        local email="$1"
+        local firstName="${2:-}"
+        local lastName="${3:-}"
+        local data="{\"contact\":{\"email\":\"$email\",\"firstName\":\"$firstName\",\"lastName\":\"$lastName\"}}"
+        ac_api POST "contact_add" "$data"
+        ;;
+      sync)
+        # Create or update contact
+        local email="$1"
+        local firstName="${2:-}"
+        local lastName="${3:-}"
+        local data="{\"contact\":{\"email\":\"$email\",\"firstName\":\"$firstName\",\"lastName\":\"$lastName\"}}"
+        ac_api POST "contact_sync" "$data"
+        ;;
+      get)
+        local id="$1"
+        ac_api GET "contact_view&id=$id"
+        ;;
+      search)
+        local query="$1"
+        ac_api GET "contact_list&query=$query"
+        ;;
+      add-tag)
+        local contact_id="$1"
+        local tag_id="$2"
+        local data="{\"contactTag\":{\"contact\":\"$contact_id\",\"tag\":\"$tag_id\"}}"
+        ac_api POST "contact_tag_add" "$data"
+        ;;
+      remove-tag)
+        local contact_id="$1"
+        local tag_id="$2"
+        ac_api GET "contact_tag_remove&contact=$contact_id&tag=$tag_id"
+        ;;
+      *)
+        echo "Usage: activecampaign contacts <list|create|sync|get|search|add-tag|remove-tag> [args...]"
+        exit 1
+        ;;
+    esac
+    ;;
+
+  deals)
+    case "$ACTION" in
+      list)
+        ac_api GET "deal_list"
+        ;;
+      create)
+        local title="$1"
+        local stage="$2"
+        local value="${3:-0}"
+        local data="{\"deal\":{\"title\":\"$title\",\"stage\":\"$stage\",\"value\":\"$value\"}}"
+        ac_api POST "deal_add" "$data"
+        ;;
+      get)
+        local id="$1"
+        ac_api GET "deal_view&id=$id"
+        ;;
+      update)
+        local id="$1"
+        shift
+        # Parse remaining args for update fields
+        local data="{\"deal\":{\"id\":\"$id\""
+        while [ $# -gt 0 ]; do
+          local key="$1"
+          local val="$2"
+          data="$data,\"$key\":\"$val\""
+          shift 2
+        done
+        data="$data}"
+        ac_api POST "deal_edit" "$data"
+        ;;
+      *)
+        echo "Usage: activecampaign deals <list|create|get|update> [args...]"
+        exit 1
+        ;;
+    esac
+    ;;
+
+  tags)
+    case "$ACTION" in
+      list)
+        ac_api GET "tags_list"
+        ;;
+      create)
+        local name="$1"
+        local data="{\"tag\":{\"name\":\"$name\"}}"
+        ac_api POST "tag_add" "$data"
+        ;;
+      sync)
+        # Sync/add tag to contact (alias for contacts add-tag)
+        local contact_id="$1"
+        local tag_id="$2"
+        local data="{\"contactTag\":{\"contact\":\"$contact_id\",\"tag\":\"$tag_id\"}}"
+        ac_api POST "contact_tag_add" "$data"
+        ;;
+      *)
+        echo "Usage: activecampaign tags <list|create|sync> [args...]"
+        exit 1
+        ;;
+    esac
+    ;;
+
+  automations)
+    case "$ACTION" in
+      list)
+        ac_api GET "automation_list"
+        ;;
+      get)
+        local id="$1"
+        ac_api GET "automation_view&id=$id"
+        ;;
+      add-contact)
+        local contact_id="$1"
+        local automation_id="$2"
+        local data="{\"contactAutomation\":{\"contact\":\"$contact_id\",\"automation\":\"$automation_id\"}}"
+        ac_api POST "contact_automation_add" "$data"
+        ;;
+      remove-contact)
+        local contact_id="$1"
+        local automation_id="$2"
+        ac_api GET "contact_automation_remove&contact=$contact_id&automation=$automation_id"
+        ;;
+      *)
+        echo "Usage: activecampaign automations <list|get|add-contact|remove-contact> [args...]"
+        exit 1
+        ;;
+    esac
+    ;;
+
+  pipelines)
+    case "$ACTION" in
+      list)
+        ac_api GET "pipeline_list"
+        ;;
+      get)
+        local id="$1"
+        ac_api GET "pipeline_view&id=$id"
+        ;;
+      *)
+        echo "Usage: activecampaign pipelines <list|get> [args...]"
+        exit 1
+        ;;
+    esac
+    ;;
+
+  stages)
+    case "$ACTION" in
+      list)
+        ac_api GET "stage_list"
+        ;;
+      get)
+        local id="$1"
+        ac_api GET "stage_view&id=$id"
+        ;;
+      *)
+        echo "Usage: activecampaign stages <list|get> [args...]"
+        exit 1
+        ;;
+    esac
+    ;;
+
+  *)
+    echo "ActiveCampaign CLI"
+    echo ""
+    echo "Usage: activecampaign <resource> <action> [args...]"
+    echo ""
+    echo "Resources:"
+    echo "  contacts   - Manage leads and contacts"
+    echo "  deals      - Sales pipeline deals"
+    echo "  tags       - Contact tagging"
+    echo "  automations - Email automation triggers"
+    echo "  pipelines  - Deal pipelines"
+    echo "  stages     - Pipeline stages"
+    echo ""
+    echo "Examples:"
+    echo "  activecampaign contacts list"
+    echo "  activecampaign contacts sync \"email@test.com\" \"John\" \"Doe\""
+    echo "  activecampaign deals create \"Clinic Name\" 1 5000"
+    echo "  activecampaign tags list"
+    echo ""
+    exit 1
+    ;;
+esac

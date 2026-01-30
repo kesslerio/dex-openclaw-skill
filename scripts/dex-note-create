@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Create a note in Dex
+# Usage: dex-note-create <json-file>
+#    or: echo '{"note": "...", "contacts": [...]}' | dex-note-create -
+
+set -euo pipefail
+
+if [ $# -eq 0 ]; then
+    echo "Usage: dex-note-create <json-file>" >&2
+    echo "   or: echo '{...}' | dex-note-create -" >&2
+    echo "" >&2
+    echo "JSON format:" >&2
+    echo '  {"timeline_event": {"note": "Meeting notes", "event_time": "2026-01-17T00:00:00Z", "meeting_type": "note", "timeline_items_contacts": {"data": [{"contact_id": "uuid"}]}}}' >&2
+    exit 1
+fi
+
+JSON_DATA=""
+if [ "$1" = "-" ]; then
+    JSON_DATA=$(cat)
+else
+    JSON_DATA=$(cat "$1")
+fi
+
+# Load DEX_API_KEY from environment
+if [ -z "${DEX_API_KEY:-}" ]; then
+    if [ -f ~/.moltbot/.env ]; then
+        source ~/.moltbot/.env
+    fi
+fi
+
+if [ -z "${DEX_API_KEY:-}" ]; then
+    echo "Error: DEX_API_KEY not set" >&2
+    exit 1
+fi
+
+# Validate JSON
+if ! echo "$JSON_DATA" | jq . > /dev/null 2>&1; then
+    echo "Error: Invalid JSON format" >&2
+    exit 1
+fi
+
+# Perform the request and capture response
+set +e
+RESPONSE=$(curl -w "\n%{http_code}" -X POST "https://api.getdex.com/api/rest/timeline_items" \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-dex-api-key: ${DEX_API_KEY}" \
+  -d "${JSON_DATA}" 2>&1)
+CURL_EXIT=$?
+set -e
+if [ $CURL_EXIT -ne 0 ]; then
+    echo "Error: Network failure (curl exit $CURL_EXIT)" >&2
+    exit 1
+fi
+
+# Extract HTTP status code (last line)
+HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
+# Extract body (everything except last line)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+# Check HTTP status
+case "$HTTP_STATUS" in
+    200|201)
+        echo "$BODY"
+        exit 0
+        ;;
+    400)
+        echo "Error: Bad request - invalid JSON or missing required fields" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+    401)
+        echo "Error: Unauthorized - invalid API key" >&2
+        exit 1
+        ;;
+    429)
+        echo "Error: Rate limited - too many requests" >&2
+        exit 1
+        ;;
+    5*)
+        echo "Error: Server error (HTTP ${HTTP_STATUS})" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: Unexpected response (HTTP ${HTTP_STATUS})" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+esac

@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Delete a note in Dex
+# Usage: dex-note-delete <note-id>
+
+set -euo pipefail
+
+if [ $# -eq 0 ]; then
+    echo "Usage: dex-note-delete <note-id>" >&2
+    exit 1
+fi
+
+NOTE_ID="$1"
+
+# Load DEX_API_KEY from environment
+if [ -z "${DEX_API_KEY:-}" ]; then
+    if [ -f ~/.moltbot/.env ]; then
+        source ~/.moltbot/.env
+    fi
+fi
+
+if [ -z "${DEX_API_KEY:-}" ]; then
+    echo "Error: DEX_API_KEY not set" >&2
+    exit 1
+fi
+
+# Perform the delete request and capture response
+RESPONSE=$(curl -w "\n%{http_code}" -X DELETE "https://api.getdex.com/api/rest/timeline_items/${NOTE_ID}" \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-dex-api-key: ${DEX_API_KEY}" 2>&1)
+
+# Extract HTTP status code (last line)
+HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
+# Extract body (everything except last line)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+# Check HTTP status
+case "$HTTP_STATUS" in
+    200|201|204)
+        echo "Note deleted successfully" >&2
+        exit 0
+        ;;
+    400)
+        echo "Error: Bad request - invalid note ID format" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+    401)
+        echo "Error: Unauthorized - invalid API key" >&2
+        exit 1
+        ;;
+    404)
+        echo "Error: Note not found (ID: ${NOTE_ID})" >&2
+        exit 1
+        ;;
+    429)
+        echo "Error: Rate limited - too many requests" >&2
+        exit 1
+        ;;
+    5*)
+        echo "Error: Server error (HTTP ${HTTP_STATUS})" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: Unexpected response (HTTP ${HTTP_STATUS})" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+esac

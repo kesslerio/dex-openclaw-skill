@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Search Dex contacts by email
+# Usage: dex-search email@example.com
+
+set -euo pipefail
+
+if [ $# -eq 0 ]; then
+    echo "Usage: dex-search <email>" >&2
+    exit 1
+fi
+
+EMAIL="$1"
+
+# URL-encode the email to handle special characters like +, &, spaces
+ENCODED_EMAIL=$(jq -rn --arg email "$EMAIL" '$email | @uri')
+
+# Load DEX_API_KEY from environment
+if [ -z "${DEX_API_KEY:-}" ]; then
+    if [ -f ~/.moltbot/.env ]; then
+        source ~/.moltbot/.env
+    fi
+fi
+
+if [ -z "${DEX_API_KEY:-}" ]; then
+    echo "Error: DEX_API_KEY not set" >&2
+    exit 1
+fi
+
+# Perform the request and capture response
+RESPONSE=$(curl -w "\n%{http_code}" -X GET "https://api.getdex.com/api/rest/search/contacts?email=${ENCODED_EMAIL}" \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-dex-api-key: ${DEX_API_KEY}" 2>&1)
+
+# Extract HTTP status code (last line)
+HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
+# Extract body (everything except last line)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+# Check HTTP status
+case "$HTTP_STATUS" in
+    200)
+        echo "$BODY"
+        exit 0
+        ;;
+    400)
+        echo "Error: Bad request - invalid email format" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+    401)
+        echo "Error: Unauthorized - invalid API key" >&2
+        exit 1
+        ;;
+    429)
+        echo "Error: Rate limited - too many requests" >&2
+        exit 1
+        ;;
+    5*)
+        echo "Error: Server error (HTTP ${HTTP_STATUS})" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: Unexpected response (HTTP ${HTTP_STATUS})" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+esac

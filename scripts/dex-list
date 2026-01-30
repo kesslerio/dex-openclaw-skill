@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# List Dex contacts with pagination
+# Usage: dex-list [limit] [offset]
+
+set -euo pipefail
+
+LIMIT="${1:-10}"
+OFFSET="${2:-0}"
+
+# Load DEX_API_KEY from environment
+if [ -z "${DEX_API_KEY:-}" ]; then
+    if [ -f ~/.moltbot/.env ]; then
+        source ~/.moltbot/.env
+    fi
+fi
+
+if [ -z "${DEX_API_KEY:-}" ]; then
+    echo "Error: DEX_API_KEY not set" >&2
+    exit 1
+fi
+
+# Perform the request and capture response
+RESPONSE=$(curl -w "\n%{http_code}" -X GET "https://api.getdex.com/api/rest/contacts?limit=${LIMIT}&offset=${OFFSET}" \
+  -H "Content-Type: application/json" \
+  -H "x-hasura-dex-api-key: ${DEX_API_KEY}" 2>&1)
+
+# Extract HTTP status code (last line)
+HTTP_STATUS=$(echo "$RESPONSE" | tail -n1)
+# Extract body (everything except last line)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+# Check HTTP status
+case "$HTTP_STATUS" in
+    200)
+        echo "$BODY"
+        exit 0
+        ;;
+    400)
+        echo "Error: Bad request - invalid pagination parameters" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+    401)
+        echo "Error: Unauthorized - invalid API key" >&2
+        exit 1
+        ;;
+    429)
+        echo "Error: Rate limited - too many requests" >&2
+        exit 1
+        ;;
+    5*)
+        echo "Error: Server error (HTTP ${HTTP_STATUS})" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+    *)
+        echo "Error: Unexpected response (HTTP ${HTTP_STATUS})" >&2
+        echo "$BODY" >&2
+        exit 1
+        ;;
+esac

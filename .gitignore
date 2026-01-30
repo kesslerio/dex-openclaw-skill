@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Config files (contain secrets)
+.config/activecampaign/
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Temporary
+tmp/
+temp/
