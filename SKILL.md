@@ -1,6 +1,6 @@
 ---
-name: activecampaign
-description: ActiveCampaign CRM integration for lead management, deal tracking, and email automation. Use for syncing demo leads, managing clinic sales pipeline, and triggering follow-up sequences.
+name: dex
+description: Dex CRM personal relationship manager. Manage contacts, notes, reminders, and relationship tracking via Dex API. Use when: 'Dex', 'Dex CRM', 'relationship manager', 'personal CRM', 'track contact', 'add note to contact', 'set reminder for person'. NOT for ActiveCampaign (use activecampaign) or Attio/ShapeScale CRM (use shapescale-crm).
 metadata: {"openclaw":{"emoji":"📧","requires":{"bins":["activecampaign"],"env":["ACTIVECAMPAIGN_URL","ACTIVECAMPAIGN_API_KEY"]},"primaryEnv":["ACTIVECAMPAIGN_URL","ACTIVECAMPAIGN_API_KEY"]}}
 ---
 
